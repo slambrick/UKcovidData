@@ -28,9 +28,10 @@ cases_and_deaths = list(
     areaName = "areaName",
     areaCode = "areaCode",
     casesSpecimen = "newCasesBySpecimenDate",
-    deathsDeath = "newDeathsByDeathDate",
+    deathsDeath = "newDeaths28DaysByDeathDate",
     casesPublish = "newCasesByPublishDate",
-    deathsPublish = "newDeaths28DaysByPublishDate"
+    deathsPublish = "newDeaths28DaysByPublishDate",
+    hospital = "hospitalCases"
 )
 
 cov_data <- tibble(get_data(
@@ -99,10 +100,14 @@ get_rolling_av <- function(df, nations, k) {
     df
 }
 
-month_to_dateStr <- function(n) {
-    ds <- if_else(n < 12, paste("2020-", sprintf("%02d", n+1), "-01", sep=""), 
-        paste("2021-", sprintf("%02d", n+1-12), "-01", sep=""))
-}
+#month_to_dateStr <- function(n) {
+#    if (n < 12)
+#        paste("2020-", sprintf("%02d", n+1), "-01", sep="")
+#    else if (n < 24)
+#        paste("2021-", sprintf("%02d", n+1-12), "-01", sep="")
+#    else
+#        paste("2022-", sprintf("%02d", n+1-24), "-01", sep="")
+#}
 
 plots_generate <- function(df, input, leg_make = TRUE){
     if (input$show_raw == "Yes") {
@@ -110,7 +115,7 @@ plots_generate <- function(df, input, leg_make = TRUE){
                             showlegend = FALSE, type="scatter",mode="lines+markers",
                             alpha = 0.5)
         p %<>% add_trace(x = ~date, y = ~av, color = ~areaName, type="scatter",
-                         mode="line", showlegend = leg_make, alpha = 1)
+                        mode = "line", showlegend = leg_make, alpha = 1)
     } else {
         p <- df %>% plot_ly(x = ~date, y = ~av, color = ~areaName, type="scatter",
                             mode="line", showlegend = leg_make)
@@ -137,8 +142,8 @@ data_wrangle <- function(df, input) {
                               paste("raw_", input$nation, sep="")),
                      names_to = c(".value", "areaName"),
                      names_sep = "_") %>% 
-        filter(as.Date(date) < as.Date(month_to_dateStr(input$date_range[2])) & 
-                   as.Date(date) > as.Date(month_to_dateStr(input$date_range[1])))
+        filter(as.Date(date) < input$date_range[2] & 
+                   as.Date(date) > input$date_range[1])
 }
 
 #----------------------------- Application ------------------------------------#
@@ -154,11 +159,12 @@ ui <- fluidPage(
                                choices = region_list),
             selectInput("data_series",
                         "Which data series to plot?",
-                        choices = c("Cases", "Deaths", "Both")),
+                        choices = c("Cases", "Deaths", "Cases & Deaths", 
+                                    "Hospital cases", "Cases & Hospital",
+                                    "All")),
             radioButtons("date_actual",
-                         "By publish date or by death/specimen date?",
-                         choices = c("Specimen/death date", "Publish date"),
-                         inline = TRUE),
+                         "By publish date or by death/specimen date? (n/a to hospital cases)",
+                         choices = c("Specimen/death date", "Publish date")),
             radioButtons("normalise",
                          "Normalise data per capita?",
                          choices = c("Yes", "No"),
@@ -172,11 +178,14 @@ ui <- fluidPage(
                         min = 2,
                         max = 30,
                         value = 7),
-            sliderInput("date_range",
-                        "Range of dates to plot (months)",
-                        min = 0,
-                        max = 12,
-                        value = c(0, 12))
+            dateRangeInput("date_range",
+                      "Date range",
+                      start = "2020-03-01",
+                      end = "2022-01-03",
+                      min = "2020-01-01",
+                      max = "2022-12-31",
+                      format = "yyyy-mm-dd",
+                      startview = "year")
         ),
 
         mainPanel(
@@ -194,38 +203,73 @@ server <- function(input, output) {
                 cov_data_use <- cov_data_all %>% mutate(cases = casesSpecimen, deaths = deathsDeath)
             else
                 cov_data_use <- cov_data_all %>% mutate(cases = casesPublish, deaths = deathsPublish)
-            if (input$data_series == "Cases" || input$data_series == "Both") {
+            if (sum(grepl(input$data_series, c("Cases", "Cases & Deaths", "Cases & Hospital", "All")))) {
                 # Case plot
                 df <- cov_data_use %>% 
                     transmute(date = date, my_data = cases, areaName = areaName)
                 df %<>% data_wrangle(input)
                 p1 <- df %>% plots_generate(input)
-                if (input$normalise == "Yes")
-                    p1 %<>% layout(xaxis = list(title = "Date"), yaxis = list(title = "New cases\nper 100,000"))
-                else
-                    p1 %<>% layout(xaxis = list(title = "Date"), yaxis = list(title = "New cases"))
+                if (input$normalise == "Yes") {
+                    p1 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "New cases\nper 100,000",
+                                                rangemode = "tozero"))
+                } else {
+                    p1 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "New cases",
+                                                rangemode = "tozero"))
+                }
             }
             
-            if (input$data_series == "Deaths" || input$data_series == "Both") {
+            if (sum(grepl(input$data_series, c("Deaths", "Cases & Deaths", "All")))) {
                 # Deaths plot
                 df <- cov_data_use %>% 
                     transmute(date = date, my_data = deaths, areaName = areaName)
                 df %<>% data_wrangle(input)
                 p2 <- df %>% plots_generate(input, leg_make = FALSE)
-                if (input$normalise == "Yes")
-                    p2 %<>% layout(xaxis = list(title = "Date"), yaxis = list(title = "New deaths\nper 100,000"))
-                else
-                    p2 %<>% layout(xaxis = list(title = "Date"), yaxis = list(title = "New deaths"))
+                if (input$normalise == "Yes") {
+                    p2 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "New deaths\nper 100,000",
+                                                rangemode = "tozero"))
+                } else {
+                    p2 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "New deaths",
+                                                rangemode = "tozero"))
+                }
+            }
+            
+            if (sum(grepl(input$data_series, c("Hospital cases", "Cases & Hospital", "All")))) {
+                # Deaths plot
+                df <- cov_data_use %>% 
+                    transmute(date = date, my_data = hospital, areaName = areaName)
+                df %<>% data_wrangle(input)
+                p3 <- df %>% plots_generate(input, leg_make = FALSE)
+                if (input$normalise == "Yes") {
+                    p3 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "Hospital cases\nper 100,000",
+                                                rangemode = "tozero"))
+                } else {
+                    p3 %<>% layout(xaxis = list(title = "Date"),
+                                   yaxis = list(title = "Hospital cases",
+                                                rangemode = "tozero"))
+                }
             }
             
             # Plot layout
-            if (input$data_series == "Both") {
+            if (input$data_series == "All") {
+                p <- subplot(p1, p2, p3, nrows = 3, shareX=TRUE, titleY=TRUE)
+                p %<>% layout(height= 1000)
+            } else if (input$data_series == "Cases & Deaths") {
                 p <- subplot(p1, p2, nrows = 2, shareX=TRUE, titleY=TRUE)
+                p %<>% layout(height= 800)
+            } else if (input$data_series == "Cases & Hospital") {
+                p <- subplot(p1, p3, nrows = 2, shareX=TRUE, titleY=TRUE)
                 p %<>% layout(height= 800)
             } else if (input$data_series == "Cases")
                 p <- p1
-            else
+            else if (input$data_series == "Deaths")
                 p <- p2
+            else if (input$data_series == "Hospital cases")
+                p <- p3
             p
         }
     })
